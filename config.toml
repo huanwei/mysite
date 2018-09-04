@@ -1,0 +1,8 @@
+baseURL = "https://huanwei.github.io/"
+languageCode = "en-us"
+title = "架构笔记"
+theme = "hyde"
+[params]
+  #themeColor = "theme-base-0b"
+  description = "架构，工具，成长"
+  copyright = "Copyright (c) 2018, Huan Wei"

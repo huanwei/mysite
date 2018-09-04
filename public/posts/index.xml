@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Posts on 架构笔记</title>
+    <link>https://huanwei.github.io/posts/</link>
+    <description>Recent content in Posts on 架构笔记</description>
+    <generator>Hugo -- gohugo.io</generator>
+    <language>en-us</language>
+    <lastBuildDate>Thu, 22 Dec 2016 19:44:35 +0800</lastBuildDate>
+    
+	<atom:link href="https://huanwei.github.io/posts/index.xml" rel="self" type="application/rss+xml" />
+    
+    
+    <item>
+      <title>kubeadm源码分析</title>
+      <link>https://huanwei.github.io/posts/kubeadm/</link>
+      <pubDate>Thu, 22 Dec 2016 19:44:35 +0800</pubDate>
+      
+      <guid>https://huanwei.github.io/posts/kubeadm/</guid>
+      <description>这两天分析了一下Kubernetes中kubeadm模块的源码。
+说明 以下源码分析基于 kubernetes v1.5.1 版本（目前的最新版本，released 8 days ago），与其他版本不一定一致。
+阅读对象 熟悉kubernetes基本原理、对源码有一定追求的技术人。
+一、程序主入口分析 看代码目录结构，可以看到1.5版本以上的kubernetes源码已经包含了kubeadm； kubeadm源码位于其中cmd包下的kubeadm目录； 其中的/cmd/kuberadm/kubeadm.go是程序的主入口； 程序主要片段及注释：
+package main import ... （略） func main() { if err := app.Run(); err != nil { //主程序入口 fmt.Printf(util.AlphaWarningOnExit) os.Exit(1) } os.Exit(0) }  kubeadm.go只有一个main()函数，它执行app.Run()，app包里的Run()则定义在另一个/kubeadm/app/kubeadm.go里，它调用cmd包下的NewKubeadmCommand() 来创建新的Kubeadm命令，并调用cmd.Execute() 使之生效；
+程序主要片段及注释：
+package app import ... （略） func Run() error { logs.InitLogs() defer logs.FlushLogs() // We do not want these flags to show up in --help pflag.CommandLine.MarkHidden(&amp;quot;google-json-key&amp;quot;) pflag.CommandLine.MarkHidden(&amp;quot;log-flush-frequency&amp;quot;) //主要工作： //调用cmd包下的NewKubeadmCommand()来创建新的Kubeadm命令 cmd := cmd.</description>
+    </item>
+    
+  </channel>
+</rss>

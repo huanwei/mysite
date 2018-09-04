@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en-us" lang="en-us">
+<head>
+  <link href="//gmpg.org/xfn/11" rel="profile">
+  <meta http-equiv="content-type" content="text/html; charset=utf-8">
+  <meta name="generator" content="Hugo 0.48" />
+
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>kubeadm源码分析 &middot; 架构笔记</title>
+
+  
+  <link type="text/css" rel="stylesheet" href="https://huanwei.github.io/css/print.css" media="print">
+  <link type="text/css" rel="stylesheet" href="https://huanwei.github.io/css/poole.css">
+  <link type="text/css" rel="stylesheet" href="https://huanwei.github.io/css/syntax.css">
+  <link type="text/css" rel="stylesheet" href="https://huanwei.github.io/css/hyde.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Abril+Fatface|PT+Sans:400,400i,700">
+
+
+  
+  <link rel="apple-touch-icon-precomposed" sizes="144x144" href="/apple-touch-icon-144-precomposed.png">
+  <link rel="shortcut icon" href="/favicon.png">
+
+  
+  <link href="" rel="alternate" type="application/rss+xml" title="架构笔记" />
+
+  
+</head>
+
+  <body class=" ">
+  <aside class="sidebar">
+  <div class="container sidebar-sticky">
+    <div class="sidebar-about">
+      <a href="https://huanwei.github.io/"><h1>架构笔记</h1></a>
+      <p class="lead">
+       架构，工具，成长 
+      </p>
+    </div>
+
+    <nav>
+      <ul class="sidebar-nav">
+        <li><a href="https://huanwei.github.io/">Home</a> </li>
+        
+      </ul>
+    </nav>
+
+    <p>Copyright (c) 2018, Huan Wei</p>
+  </div>
+</aside>
+
+    <main class="content container">
+    <div class="post">
+  <h1>kubeadm源码分析</h1>
+  <time datetime=2016-12-22T19:44:35&#43;0800 class="post-date">Thu, Dec 22, 2016</time>
+  
+
+<p>这两天分析了一下Kubernetes中kubeadm模块的源码。</p>
+
+<h3 id="说明">说明</h3>
+
+<p>以下源码分析基于 kubernetes v1.5.1 版本（目前的最新版本，released 8 days ago），与其他版本不一定一致。</p>
+
+<h3 id="阅读对象">阅读对象</h3>
+
+<p>熟悉kubernetes基本原理、对源码有一定追求的技术人。</p>
+
+<h2 id="一-程序主入口分析">一、程序主入口分析</h2>
+
+<p>看代码目录结构，可以看到1.5版本以上的kubernetes源码已经包含了kubeadm；
+kubeadm源码位于其中cmd包下的kubeadm目录；
+其中的/cmd/kuberadm/kubeadm.go是程序的主入口；
+程序主要片段及注释：</p>
+
+<pre><code>package main
+import ... （略）
+
+func main() {
+	if err := app.Run(); err != nil { //主程序入口
+		fmt.Printf(util.AlphaWarningOnExit)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+</code></pre>
+
+<p>kubeadm.go只有一个main()函数，它执行app.Run()，app包里的Run()则定义在另一个/kubeadm/app/kubeadm.go里，它调用cmd包下的NewKubeadmCommand() 来创建新的Kubeadm命令，并调用cmd.Execute() 使之生效；</p>
+
+<p>程序主要片段及注释：</p>
+
+<pre><code>package app
+import ... （略）
+
+func Run() error {
+	logs.InitLogs()
+	defer logs.FlushLogs()
+
+	// We do not want these flags to show up in --help
+	pflag.CommandLine.MarkHidden(&quot;google-json-key&quot;)
+	pflag.CommandLine.MarkHidden(&quot;log-flush-frequency&quot;)
+
+	//主要工作：
+	//调用cmd包下的NewKubeadmCommand()来创建新的Kubeadm命令
+	cmd := cmd.NewKubeadmCommand(cmdutil.NewFactory(nil), os.Stdin, os.Stdout, os.Stderr)
+	//并调用cmd.Execute() 使之生效
+	return cmd.Execute()
+}
+</code></pre>
+
+<p>NewKubeadmCommand() 调用AddCommand(NewCmdInit())、AddCommand(NewCmdJoin())以及AddCommand(NewCmdReset())、AddCommand(NewCmdToken())、AddCommand(NewCmdVersion())分别创建了kubeadm init、kubeadm join、kubeadm reset、kubeadm token、kubeadm version这5条命令。</p>
+
+<pre><code>package cmd
+import ... （略）
+
+func NewKubeadmCommand(f cmdutil.Factory, in io.Reader, out, err io.Writer) *cobra.Command {
+	cmds := &amp;cobra.Command{
+		Use:   &quot;kubeadm&quot;,
+		... （略）
+
+	cmds.ResetFlags()
+	cmds.SetGlobalNormalizationFunc(flag.WarnWordSepNormalizeFunc)
+
+	//分别创建以下5个命令
+	/*
+	kubeadm init主要完成了通信令牌（用于双向认证）的创建、证书及密钥的生成、master节点的注册以及各个组件的启动。
+	*/
+	cmds.AddCommand(NewCmdInit(out))
+	/*
+	kubeadm join根据令牌获取集群信息，并生成节点kubelet配置文件。下一次节点上的kubelet就可以按已有的配置进行重启，开始生效。
+	*/
+	cmds.AddCommand(NewCmdJoin(out))
+	/*
+	kubeadm reset主要是回退当前节点在之前执行kubeadm init或者kubeadm join的执行结果。
+	*/
+	cmds.AddCommand(NewCmdReset(out))
+	/*
+	kubeadm token主要是可以事先生成一个token供init或join时使用。
+	*/
+	cmds.AddCommand(NewCmdToken(out))
+	/*
+	kubeadm version主要是获取kubeadm版本信息。
+	*/
+	cmds.AddCommand(NewCmdVersion(out))
+
+	return cmds
+}
+</code></pre>
+
+<p>下面按顺序对kubeadm init、kubeadm join、kubeadm reset、kubeadm token、kubeadm version的源码进行简单分析。</p>
+
+<h2 id="二-kubeadm-init分析">二、kubeadm init分析</h2>
+
+<p>NewCmdInit()的实现在app/cmd/init.go里，它创建了一个cobra.Command类型的命令对象，并指定了该命令的相关参数；</p>
+
+<pre><code>package cmd
+import ... （略）
+
+// NewCmdInit returns &quot;kubeadm init&quot; command.
+func NewCmdInit(out io.Writer) *cobra.Command {
+	versioned := &amp;kubeadmapiext.MasterConfiguration{}
+	api.Scheme.Default(versioned)
+	cfg := kubeadmapi.MasterConfiguration{}
+	api.Scheme.Convert(versioned, &amp;cfg, nil)
+
+	var cfgPath string
+	var skipPreFlight bool
+	//创建一个cobra.Command类型的命令对象，并指定该命令的相关参数
+	cmd := &amp;cobra.Command{
+		Use:   &quot;init&quot;,
+		Short: &quot;Run this in order to set up the Kubernetes master&quot;,
+		//实际运行的是这里
+		Run: func(cmd *cobra.Command, args []string) {
+			//执行init一些准备工作，如获取本机IP等初始化配置
+			i, err := NewInit(cfgPath, &amp;cfg, skipPreFlight)
+			kubeadmutil.CheckErr(err)
+			//主要工作在下面这个i.Run()方法
+			kubeadmutil.CheckErr(i.Run(out))
+		},
+	}
+
+... （略）
+</code></pre>
+
+<p>NewCmdInit()方法首先调用NewInit()方法执行init的一些准备工作，如获取本机IP等初始化配置；</p>
+
+<pre><code>func NewInit(cfgPath string, cfg *kubeadmapi.MasterConfiguration, skipPreFlight bool) (*Init, error) {
+	... （略）
+	// Auto-detect the IP
+	if len(cfg.API.AdvertiseAddresses) == 0 {
+		// TODO(phase1+) perhaps we could actually grab eth0 and eth1
+		//目前是去 /proc/net/route 里获取本机IP
+		ip, err := netutil.ChooseHostInterface()
+		if err != nil {
+			return nil, err
+		}
+		cfg.API.AdvertiseAddresses = []string{ip.String()}
+	}
+
+	... （略）
+	// TODO(phase1+) create a custom flag
+	// 判断是否在云主机上进行部署，后续的操作还没有实现。。
+	if cfg.CloudProvider != &quot;&quot; {
+		if cloudprovider.IsCloudProvider(cfg.CloudProvider) {
+			fmt.Printf(&quot;cloud provider %q initialized for the control plane. Remember to set the same cloud provider flag on the kubelet.\n&quot;, cfg.CloudProvider)
+		} else {
+			return nil, fmt.Errorf(&quot;cloud provider %q is not supported, you can use any of %v, or leave it unset.\n&quot;, cfg.CloudProvider, cloudprovider.CloudProviders())
+		}
+	}
+	return &amp;Init{cfg: cfg}, nil
+}
+</code></pre>
+
+<p>NewCmdInit()方法然后调用NewInit()方法返回结果执行i.Run()方法，主要工作就在这里：</p>
+
+<pre><code>// Run executes master node provisioning, including certificates, needed static pod manifests, etc.
+func (i *Init) Run(out io.Writer) error {
+	/*
+	主要工作：
+	创建令牌文件(token)。创建过程为：
+	1.调用generateTokenIfNeeded() 检查是否需要创建令牌；
+	  目前相应操作还未实现，所以会生成新的令牌, 并在屏幕输出“&lt;master/tokens&gt; generated token”信息;
+	2.调用os.MkdirAll()创建用来存放令牌文件的目录；MkdirAll()可以看作是Go语言对mkdir -p的实现；
+	3.序列化生成的令牌;
+	4.调用cmdutil.DumpReaderToFile()将其写入文件。
+	*/
+	if err := kubemaster.CreateTokenAuthFile(&amp;i.cfg.Secrets); err != nil {
+		return err
+	}
+
+	/*
+	主要工作：
+	创建静态Pod资源描述文件。
+	这些Pod包括Kubernetes的基础组件：kubeAPIServer、kubeControllerManager、kubeScheduler以及etcd。
+	这些资源描述文件都是json格式，指定了相关的镜像及运行参数。
+	*/
+	if err := kubemaster.WriteStaticPodManifests(i.cfg); err != nil {
+		return err
+	}
+
+	/*
+	主要工作：
+	创建公钥基础设施：
+	首先创建服务端自签名CA证书，以及供token签名的key；
+	最后将它们写入文件 /etc/kubernetes/pki；
+	并输出“&lt;master/pki&gt; created keys and certificates in /etc/kubernetes/pki”的信息。
+	*/
+	caKey, caCert, err := kubemaster.CreatePKIAssets(i.cfg)
+	if err != nil {
+		return err
+	}
+
+	/*
+	主要工作：
+	创建客户端配置，指定访问的地址和端口，以及确定证书；
+	并调用kubeadmutil.WriteKubeconfigIfNotExists()方法,
+	将两个配置文件分别写入/etc/kubernetes/kubelet.conf 和 /etc/kubernetes/admin.conf，
+	并输出&lt;util/config&gt; created ...相关信息。
+	*/
+	kubeconfigs, err := kubemaster.CreateCertsAndConfigForClients(i.cfg.API, []string{&quot;kubelet&quot;, &quot;admin&quot;}, caKey, caCert)
+	if err != nil {
+		return err
+	}
+
+	// kubeadm is responsible for writing the following kubeconfig file, which
+	// kubelet should be waiting for. Help user avoid foot-shooting by refusing to
+	// write a file that has already been written (the kubelet will be up and
+	// running in that case - they'd need to stop the kubelet, remove the file, and
+	// start it again in that case).
+	// TODO(phase1+) this is no longer the right place to guard agains foo-shooting,
+	// we need to decide how to handle existing files (it may be handy to support
+	// importing existing files, may be we could even make our command idempotant,
+	// or at least allow for external PKI and stuff)
+	for name, kubeconfig := range kubeconfigs {
+		//将两个配置文件分别写入 /etc/kubernetes/kubelet.conf 和 /etc/kubernetes/admin.conf
+		if err := kubeadmutil.WriteKubeconfigIfNotExists(name, kubeconfig); err != nil {
+			return err
+		}
+	}
+
+
+	/*
+	主要工作：
+	1.根据前面创建的admin.conf配置创建客户端配置，输出“&lt;master/apiclient&gt; created API client configuration”；
+	2.根据配置创建API客户端，并等待“&lt;master/apiclient&gt; created API client, waiting for the control plane to become ready”；
+	3.调用wait.PollInfinite()，传入条件函数对各个组件的健康状态进行无限探测，每隔apiCallRetryInterval（默认500毫秒）一次，直到所有的组件都健康，并计算花费的时间。
+	  输出“&lt;master/apiclient&gt; all control plane components are healthy after %f seconds”信息。
+	4.再次以同样频率调用wait.PollInfinite()，传入条件函数不断检测是否有节点加入，直到至少一个节点注册并就绪。
+	  如果有多个节点，会选择第一个进行注册。同时输出“&lt;master/apiclient&gt; first node is ready after %f seconds\n”信息。
+	*/
+	client, err := kubemaster.CreateClientAndWaitForAPI(kubeconfigs[&quot;admin&quot;])
+	if err != nil {
+		return err
+	}
+
+	//确定该节点为master节点，并设置为“不可调度”，即不是工作节点。
+	schedulePodsOnMaster := false
+	if err := kubemaster.UpdateMasterRoleLabelsAndTaints(client, schedulePodsOnMaster); err != nil {
+		return err
+	}
+
+	/*
+	主要工作：
+	1.创建KubeDiscovery实例；
+	2.输出“&lt;master/discovery&gt; created essential addon: kube-discovery, waiting for it to become ready”信息；
+	3.依然调用wait.PollInfinite()，传入条件函数不停获取KubeDiscovery实例，直到它拥有一个可用实例为止；
+	4.计算等待的时间，并输出“&lt;master/discovery&gt; kube-discovery is ready after %f seconds”信息。
+	*/
+	if err := kubemaster.CreateDiscoveryDeploymentAndSecret(i.cfg, client, caCert); err != nil {
+		return err
+	}
+
+	/*
+	主要工作：
+	1.创建KubeProxy的DaemonSet，以及KubeDNS实例。
+	2.最后发布DNS的Service，输出“&lt;master/addons&gt; created essential addon: kube-dns”信息。
+	*/
+	if err := kubemaster.CreateEssentialAddons(i.cfg, client); err != nil {
+		return err
+	}
+
+	/*
+	主要工作：
+	所有工作完成后，输出Kubernetes master initialised successfully! You can now join any number of machines by running the following on each node: kubeadm join --token %s %s信息，
+	表示master节点配置结束。
+	*/
+	data := joinArgsData{i.cfg, kubeadmapiext.DefaultAPIBindPort, kubeadmapiext.DefaultDiscoveryBindPort}
+	if joinArgs, err := generateJoinArgs(data); err != nil {
+		return err
+	} else {
+		fmt.Fprintf(out, initDoneMsgf, joinArgs) //输出信息
+	}
+	return nil
+}
+</code></pre>
+
+<p>小结：
+从以上源码分析可以大致知道，kubeadm init主要完成了通信令牌（用于双向认证）的创建、证书及密钥的生成、master节点的注册以及各个组件的启动。</p>
+
+<h2 id="三-kubeadm-join分析">三、kubeadm join分析</h2>
+
+<p>NewCmdJoin()的实现在app/cmd/join.go里，与NewCmdInit()类似，它也是创建了一个cobra.Command类型的命令对象，并指定了该命令的相关参数；</p>
+
+<pre><code>package cmd
+import ... （略）
+
+// NewCmdJoin returns &quot;kubeadm join&quot; command.
+func NewCmdJoin(out io.Writer) *cobra.Command {
+	versioned := &amp;kubeadmapiext.NodeConfiguration{}
+	api.Scheme.Default(versioned)
+	cfg := kubeadmapi.NodeConfiguration{}
+	api.Scheme.Convert(versioned, &amp;cfg, nil)
+
+	var skipPreFlight bool
+	var cfgPath string
+
+	//创建一个cobra.Command类型的命令对象，并指定该命令的相关参数
+	cmd := &amp;cobra.Command{
+		Use:   &quot;join &lt;master address&gt;&quot;,
+		Short: &quot;Run this on any machine you wish to join an existing cluster&quot;,
+		Run: func(cmd *cobra.Command, args []string) {
+			j, err := NewJoin(cfgPath, args, &amp;cfg, skipPreFlight)
+			kubeadmutil.CheckErr(err)
+			//重点是下面这个j.Run()函数
+			kubeadmutil.CheckErr(j.Run(out))
+		},
+	}
+
+... （略）
+</code></pre>
+
+<p>NewCmdJoin()方法首先调用NewJoin()方法执行init的一些准备工作，比如检查是否有命令参数、检查令牌格式是否合法；</p>
+
+<pre><code>func NewJoin(cfgPath string, args []string, cfg *kubeadmapi.NodeConfiguration, skipPreFlight bool) (*Join, error) {
+	... （略）
+	//首先会检查是否有命令参数。
+	//在节点上执行的kubeadm join命令是前面kubeadm init生成的结果，包含了令牌及master节点地址作为参数。
+
+	if len(args) == 0 &amp;&amp; len(cfg.MasterAddresses) == 0 {
+		return nil, fmt.Errorf(&quot;must specify master address (see --help)&quot;)
+	}
+	cfg.MasterAddresses = append(cfg.MasterAddresses, args...)
+	if len(cfg.MasterAddresses) &gt; 1 {
+		return nil, fmt.Errorf(&quot;Must not specify more than one master address  (see --help)&quot;)
+	}
+
+	... （略）
+	//检查令牌格式的合法性
+	//输出“&lt;util/tokens&gt; validating provided token”
+	ok, err := kubeadmutil.UseGivenTokenIfValid(&amp;cfg.Secrets)
+	if !ok {
+		if err != nil {
+			return nil, fmt.Errorf(&quot;%v (see --help)\n&quot;, err)
+		}
+		return nil, fmt.Errorf(&quot;Must specify --token (see --help)\n&quot;)
+	}
+
+	return &amp;Join{cfg: cfg}, nil
+}
+</code></pre>
+
+<p>NewCmdJoin()方法然后调用NewJoin()方法返回结果执行j.Run()方法，主要工作就在这里：</p>
+
+<pre><code>func NewJoin(cfgPath string, args []string, cfg *kubeadmapi.NodeConfiguration, skipPreFlight bool) (*Join, error) {
+	if cfgPath != &quot;&quot; {
+		b, err := ioutil.ReadFile(cfgPath)
+		if err != nil {
+			return nil, fmt.Errorf(&quot;unable to read config from %q [%v]&quot;, cfgPath, err)
+		}
+		if err := runtime.DecodeInto(api.Codecs.UniversalDecoder(), b, cfg); err != nil {
+			return nil, fmt.Errorf(&quot;unable to decode config from %q [%v]&quot;, cfgPath, err)
+		}
+	}
+
+	//首先会检查是否有命令参数。
+	//在节点上执行的kubeadm join命令是前面kubeadm init生成的结果，包含了令牌及master节点地址作为参数。
+
+	if len(args) == 0 &amp;&amp; len(cfg.MasterAddresses) == 0 {
+		return nil, fmt.Errorf(&quot;must specify master address (see --help)&quot;)
+	}
+	cfg.MasterAddresses = append(cfg.MasterAddresses, args...)
+	if len(cfg.MasterAddresses) &gt; 1 {
+		return nil, fmt.Errorf(&quot;Must not specify more than one master address  (see --help)&quot;)
+	}
+
+	if !skipPreFlight {
+		fmt.Println(&quot;Running pre-flight checks&quot;)
+		err := preflight.RunJoinNodeChecks(cfg)
+		if err != nil {
+			return nil, &amp;preflight.PreFlightError{Msg: err.Error()}
+		}
+	} else {
+		fmt.Println(&quot;Skipping pre-flight checks&quot;)
+	}
+
+	//检查令牌格式的合法性
+	//输出“&lt;util/tokens&gt; validating provided token”
+	ok, err := kubeadmutil.UseGivenTokenIfValid(&amp;cfg.Secrets)
+	if !ok {
+		if err != nil {
+			return nil, fmt.Errorf(&quot;%v (see --help)\n&quot;, err)
+		}
+		return nil, fmt.Errorf(&quot;Must specify --token (see --help)\n&quot;)
+	}
+
+	return &amp;Join{cfg: cfg}, nil
+}
+
+// Run executes worked node provisioning and tries to join an existing cluster.
+func (j *Join) Run(out io.Writer) error {
+
+	/*
+	主要工作：
+	获取集群信息，输出“&lt;node/discovery&gt; created cluster info discovery client, requesting info from”信息；
+	向master节点的9898端口发送GET请求，请求的URL为http://MASTER-IP:9898/cluster-info/v1/?token-id=TOKENID；
+	返回的结果分解为一个JWS（JsonWebSignature）对象；
+	输出“&lt;node/discovery&gt; cluster info object received, verifying signature using given token”后并用该对象的Verify()校验节点令牌，
+	校验成功生成集群信息，包含apiServer地址和CA证书，输出“&lt;node/discovery&gt; cluster info signature and contents are valid, will use API endpoints”。
+	*/
+	clusterInfo, err := kubenode.RetrieveTrustedClusterInfo(j.cfg)
+	if err != nil {
+		return err
+	}
+
+	/*
+	主要工作：
+	和Master节点建立连接，输出&quot;&lt;node/bootstrap&gt; successfully established connection with endpoint %s\n&quot;信息
+	*/
+	connectionDetails, err := kubenode.EstablishMasterConnection(j.cfg, clusterInfo)
+	if err != nil {
+		return err
+	}
+
+	/*
+	主要工作：
+	首先会获取客户端配置信息，并利用主机名作为节点名，生成节点启动配置；
+	据此创建客户端API Client，生成key和CSR文件；
+	输出“&lt;node/csr&gt; created API client to obtain unique certificate for this node, generating keys and certificate signing request ”，
+	并向apiServer请求生成该节点的kubelet的配置信息，
+	输出“&lt;node/csr&gt; received signed certificate from the API server, generating kubelet configuration”
+	*/
+	kubeconfig, err := kubenode.PerformTLSBootstrap(connectionDetails)
+	if err != nil {
+		return err
+	}
+
+	/*
+	主要工作：
+	将客户端kubelet配置信息写入文件，
+	输出“&lt;util/kubeconfig&gt; created /etc/kubernetes/kubelet.conf”。
+	*/
+	err = kubeadmutil.WriteKubeconfigIfNotExists(&quot;kubelet&quot;, kubeconfig)
+	if err != nil {
+		return err
+	}
+
+	/*
+	主要工作：
+	最后输出相应的提示信息：“Node join complete: * Certificate signing request sent to master and response received. * Kubelet informed of new secure connection details.
+	Run 'kubectl get nodes' on the master to see this machine join.”
+	*/
+	fmt.Fprintf(out, joinDoneMsgf)
+	return nil
+}
+</code></pre>
+
+<p>小结：
+kubeadm join根据令牌获取集群信息，并生成节点kubelet配置文件。下一次节点上的kubelet就可以按已有的配置进行重启，开始生效。</p>
+
+<h2 id="四-kubeadm-reset分析">四、kubeadm reset分析</h2>
+
+<p>NewCmdReset()的实现在app/cmd/reset.go里，与NewCmdInit()类似，它也是创建了一个cobra.Command类型的命令对象，并指定了该命令的相关参数；</p>
+
+<pre><code>package cmd
+import ... （略）
+
+// NewCmdReset returns &quot;kubeadm reset&quot; command.
+func NewCmdReset(out io.Writer) *cobra.Command {
+	var skipPreFlight bool
+	cmd := &amp;cobra.Command{
+		Use:   &quot;reset&quot;,
+		Short: &quot;Run this to revert any changes made to this host by 'kubeadm init' or 'kubeadm join'.&quot;,
+		Run: func(cmd *cobra.Command, args []string) {
+			r, err := NewReset(skipPreFlight)
+			kubeadmutil.CheckErr(err)
+			//主要工作在下面这个r.Run()方法
+			kubeadmutil.CheckErr(r.Run(out))
+		},
+	}
+
+	cmd.PersistentFlags().BoolVar(
+		&amp;skipPreFlight, &quot;skip-preflight-checks&quot;, false,
+		&quot;skip preflight checks normally run before modifying the system&quot;,
+	)
+
+	return cmd
+}
+</code></pre>
+
+<p>NewReset()方法只做一些简单的前置检查，以上每个命令都有，基本可以忽略不看；
+NewCmdReset()方法然后调用NewReset()方法返回结果执行j.Run()方法，主要工作就在这里：</p>
+
+<pre><code>// Run reverts any changes made to this host by &quot;kubeadm init&quot; or &quot;kubeadm join&quot;.
+func (r *Reset) Run(out io.Writer) error {
+	//停掉kubelet进程
+	serviceToStop := &quot;kubelet&quot;
+	initSystem, err := initsystem.GetInitSystem()
+	if err != nil {
+		fmt.Printf(&quot;%v&quot;, err)
+	} else {
+		fmt.Printf(&quot;Stopping the %s service...\n&quot;, serviceToStop)
+		initSystem.ServiceStop(serviceToStop)
+	}
+
+	//卸载kubelet生成的文件目录 /var/lib/kubelet
+	fmt.Printf(&quot;Unmounting directories in /var/lib/kubelet...\n&quot;)
+	// Don't check for errors here, since umount will return a non-zero exit code if there is no directories to umount
+	exec.Command(&quot;sh&quot;, &quot;-c&quot;, &quot;cat /proc/mounts | awk '{print $2}' | grep '/var/lib/kubelet' | xargs umount&quot;).Run()
+
+	//删除之前kubeadm生成的配置文件目录 /etc/kubernetes
+	resetConfigDir(&quot;/etc/kubernetes/&quot;)
+
+	//删除文件目录/var/lib/kubelet 和 /var/lib/etcd
+	dirsToClean := []string{&quot;/var/lib/kubelet&quot;, &quot;/var/lib/etcd&quot;}
+	fmt.Printf(&quot;Deleting contents of stateful directories: %v\n&quot;, dirsToClean)
+	for _, dir := range dirsToClean {
+		cleanDir(dir)
+	}
+
+	//停掉当前节点运行的所有k8s docker容器
+	dockerCheck := preflight.ServiceCheck{Service: &quot;docker&quot;}
+	if warnings, errors := dockerCheck.Check(); len(warnings) == 0 &amp;&amp; len(errors) == 0 {
+		fmt.Println(&quot;Stopping all running docker containers...&quot;)
+		if err := exec.Command(&quot;sh&quot;, &quot;-c&quot;, &quot;docker ps | grep 'k8s_' | awk '{print $1}' | xargs docker rm --force --volumes&quot;).Run(); err != nil {
+			fmt.Println(&quot;failed to stop the running containers&quot;)
+		}
+	} else {
+		fmt.Println(&quot;docker doesn't seem to be running, skipping the removal of kubernetes containers&quot;)
+	}
+
+	return nil
+}
+</code></pre>
+
+<p>小结：
+kubeadm reset主要是回退当前节点在之前执行kubeadm init或者kubeadm join的执行结果。</p>
+
+<h2 id="五-kubeadm-token分析">五、kubeadm token分析</h2>
+
+<p>NewCmdToken()的实现在app/cmd/token.go里，与NewCmdInit()类似，它也是创建了一个cobra.Command类型的命令对象，并指定了该命令的相关参数；
+与其他几个命令不同的是，NewCmdToken()方法会返回一个error；
+看一下区别：</p>
+
+<pre><code>package cobra
+import ... （略）
+
+// Command is just that, a command for your application.
+// eg.  'go run' ... 'run' is the command. Cobra requires
+// you to define the usage and description as part of your command
+// definition to ensure usability.
+type Command struct {
+... （略）
+// Run: Typically the actual work function. Most commands will only implement this
+Run func(cmd *Command, args []string)
+// RunE: Run but returns an error
+RunE func(cmd *Command, args []string) error
+... （略）
+}
+</code></pre>
+
+<p>该方法比较简单，如下：</p>
+
+<pre><code>package cmd
+import ... （略）
+
+func NewCmdToken(out io.Writer) *cobra.Command {
+	cmd := &amp;cobra.Command{
+		Use:   &quot;token&quot;,
+		Short: &quot;Manage tokens used by init/join&quot;,
+
+		// Without this callback, if a user runs just the &quot;token&quot;
+		// command without a subcommand, or with an invalid subcommand,
+		// cobra will print usage information, but still exit cleanly.
+		// We want to return an error code in these cases so that the
+		// user knows that their command was invalid.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) &lt; 1 {
+				return errors.New(&quot;missing subcommand; 'token' is not meant to be run on its own&quot;)
+			} else {
+				return fmt.Errorf(&quot;invalid subcommand: %s&quot;, args[0])
+			}
+		},
+	}
+	//主要工作在这个NewCmdTokenGenerate()方法
+	cmd.AddCommand(NewCmdTokenGenerate(out))
+	return cmd
+}
+
+func NewCmdTokenGenerate(out io.Writer) *cobra.Command {
+	return &amp;cobra.Command{
+		Use:   &quot;generate&quot;,
+		Short: &quot;Generate and print a token suitable for use with init/join&quot;,
+		Long: dedent.Dedent(`
+			This command will print out a randomly-generated token that you can use with
+			the &quot;init&quot; and &quot;join&quot; commands.
+
+			You don't have to use this command in order to generate a token, you can do so
+			yourself as long as it's in the format &quot;&lt;6 characters&gt;.&lt;16 characters&gt;&quot;. This
+			command is provided for convenience to generate tokens in that format.
+
+			You can also use &quot;kubeadm init&quot; without specifying a token, and it will
+			generate and print one for you.
+		`),
+		Run: func(cmd *cobra.Command, args []string) {
+			//生成token
+			err := RunGenerateToken(out)
+			kubeadmutil.CheckErr(err)
+		},
+	}
+}
+//生成token
+func RunGenerateToken(out io.Writer) error {
+	s := &amp;kubeadmapi.Secrets{}
+	err := util.GenerateToken(s)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintln(out, s.GivenToken)
+	return nil
+}
+</code></pre>
+
+<p>小结：
+kubeadm token主要是可以事先生成一个token供init或join时使用。</p>
+
+<h2 id="六-kubeadm-version分析">六、kubeadm version分析</h2>
+
+<p>NewCmdVersion()的实现在app/cmd/version.go里，与NewCmdInit()类似，它也是创建了一个cobra.Command类型的命令对象，并指定了该命令的相关参数；
+方法很简单，就是返回kubeadm的版本信息，如下：</p>
+
+<pre><code>package cmd
+import ... （略）
+
+func NewCmdVersion(out io.Writer) *cobra.Command {
+	cmd := &amp;cobra.Command{
+		Use:   &quot;version&quot;,
+		Short: &quot;Print the version of kubeadm&quot;,
+		Run: func(cmd *cobra.Command, args []string) {
+			//获取版本信息
+			err := RunVersion(out, cmd)
+			kubeadmutil.CheckErr(err)
+		},
+	}
+	return cmd
+}
+
+func RunVersion(out io.Writer, cmd *cobra.Command) error {
+	fmt.Fprintf(out, &quot;kubeadm version: %#v\n&quot;, version.Get())
+	return nil
+}
+</code></pre>
+
+<p>其中version.Get()方法如下：</p>
+
+<pre><code>// Get returns the overall codebase version. It's for detecting
+// what code a binary was built from.
+func Get() Info {
+	// These variables typically come from -ldflags settings and in
+	// their absence fallback to the settings in pkg/version/base.go
+	return Info{
+		Major:        gitMajor,
+		Minor:        gitMinor,
+		GitVersion:   gitVersion,
+		GitCommit:    gitCommit,
+		GitTreeState: gitTreeState,
+		BuildDate:    buildDate,
+		GoVersion:    runtime.Version(),
+		Compiler:     runtime.Compiler,
+		Platform:     fmt.Sprintf(&quot;%s/%s&quot;, runtime.GOOS, runtime.GOARCH),
+	}
+}
+</code></pre>
+
+<p>小结：
+kubeadm version很简单就是获取kubeadm版本信息。</p>
+
+<p>分析到此结束。</p>
+
+</div>
+
+
+    </main>
+
+    
+  </body>
+</html>

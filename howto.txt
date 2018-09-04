@@ -1,0 +1,6 @@
+#how to add a new post
+
+hugo new posts/xxx.md
+#hugo server -D
+hugo server
+hugo --theme=hyde --baseUrl="https://huanwei.github.io/"
