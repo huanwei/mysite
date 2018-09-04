@@ -4,3 +4,5 @@ hugo new posts/xxx.md
 #hugo server -D
 hugo server
 hugo --theme=hyde --baseUrl="https://huanwei.github.io/"
+
+#cp -r public/* ../huanwei.github.io/
