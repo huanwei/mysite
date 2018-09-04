@@ -6,3 +6,8 @@ hugo server
 hugo --theme=hyde --baseUrl="https://huanwei.github.io/"
 
 #cp -r public/* ../huanwei.github.io/
+
+#git rm --cached themes/hyde/
+#git add .
+#git commit -m "update" -s
+#git push origin master
