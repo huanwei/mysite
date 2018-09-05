@@ -12,12 +12,13 @@
     
     
     <item>
-      <title>TestComments</title>
-      <link>https://huanwei.github.io/posts/testcomments/</link>
+      <title>TestCase</title>
+      <link>https://huanwei.github.io/posts/testcase/</link>
       <pubDate>Wed, 05 Sep 2018 14:06:47 +0800</pubDate>
       
-      <guid>https://huanwei.github.io/posts/testcomments/</guid>
-      <description>this is only a test case.</description>
+      <guid>https://huanwei.github.io/posts/testcase/</guid>
+      <description>this is only a test case.
+java code /* * Licensed to the Apache Software Foundation (ASF) under one or more * contributor license agreements. See the NOTICE file distributed with * this work for additional information regarding copyright ownership. * The ASF licenses this file to You under the Apache License, Version 2.0 * (the &amp;quot;License&amp;quot;); you may not use this file except in compliance with * the License.</description>
     </item>
     
     <item>
